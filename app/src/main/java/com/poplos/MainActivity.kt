@@ -165,16 +165,64 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showEventDialog(event: GameEvent) {
-        val choices = event.choices.map { it.text }.toTypedArray()
-
-        AlertDialog.Builder(this)
-            .setTitle(event.title)
-            .setMessage(event.description)
-            .setItems(choices) { dialog, which ->
-                handleChoice(event.choices[which])
+        // Custom Dialog Layout for Undertale style
+        val dialogView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(40, 40, 40, 40)
+            setBackgroundColor(Color.BLACK)
+            background = GradientDrawable().apply {
+                setColor(Color.BLACK)
+                setStroke(6, Color.WHITE) // White border
+                cornerRadius = 10f
             }
-            .setCancelable(false)
-            .show()
+        }
+
+        // Title
+        val titleView = TextView(this).apply {
+            text = event.title
+            textSize = 24f
+            setTextColor(Color.WHITE)
+            typeface = android.graphics.Typeface.MONOSPACE
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 20)
+        }
+        dialogView.addView(titleView)
+
+        // Description
+        val descView = TextView(this).apply {
+            text = event.description
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(0, 0, 0, 40)
+        }
+        dialogView.addView(descView)
+
+        // Create the dialog now so we can dismiss it in buttons
+        val builder = AlertDialog.Builder(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        builder.setView(dialogView)
+        builder.setCancelable(false)
+        val dialog = builder.create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent) // Transparent background for custom shape
+
+        // Choices
+        event.choices.forEach { choice ->
+            val btn = Button(this).apply {
+                text = "* ${choice.text}"
+                setTextColor(Color.WHITE)
+                textSize = 18f
+                typeface = android.graphics.Typeface.MONOSPACE
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                setBackgroundColor(Color.TRANSPARENT) // Transparent button background
+                setOnClickListener {
+                    dialog.dismiss()
+                    handleChoice(choice)
+                }
+            }
+            dialogView.addView(btn)
+        }
+
+        dialog.show()
     }
 
     private fun handleChoice(choice: EventChoice) {
