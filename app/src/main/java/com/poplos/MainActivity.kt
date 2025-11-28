@@ -1,6 +1,6 @@
 package com.poplos
 
-import android.content.Context
+import android.content.DialogInterface
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -8,18 +8,19 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var rootLayout: LinearLayout
+    private lateinit var rootLayout: FrameLayout
     private lateinit var gameEngine: GameEngine
+    private var gameView: GameView? = null
+    private lateinit var statsText: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,7 +34,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupStartMenu() {
-        rootLayout = LinearLayout(this).apply {
+        val menuLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setBackgroundColor(Color.parseColor("#1A1A2E")) // Dark Background
@@ -45,7 +46,7 @@ class MainActivity : AppCompatActivity() {
 
         // Title
         val titleText = TextView(this).apply {
-            text = "Poplos 2025"
+            text = "Поплос 2025"
             textSize = 50f
             setTextColor(Color.parseColor("#00F0FF")) // Neon Blue
             gravity = Gravity.CENTER
@@ -54,20 +55,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Play Button
-        val playButton = createStyledButton("PLAY") {
+        val playButton = createStyledButton("ИГРАТЬ") {
             showDifficultySelection()
         }
 
         // Settings Button
-        val settingsButton = createStyledButton("SETTINGS") {
-            Toast.makeText(this@MainActivity, "Music: ON\nSound: ON", Toast.LENGTH_SHORT).show()
+        val settingsButton = createStyledButton("НАСТРОЙКИ") {
+            Toast.makeText(this@MainActivity, "Музыка: ВКЛ\nЗвук: ВКЛ", Toast.LENGTH_SHORT).show()
         }
 
-        rootLayout.addView(titleText)
-        rootLayout.addView(playButton)
-        rootLayout.addView(settingsButton)
+        menuLayout.addView(titleText)
+        menuLayout.addView(playButton)
+        menuLayout.addView(settingsButton)
 
-        setContentView(rootLayout)
+        setContentView(menuLayout)
     }
 
     private fun showDifficultySelection() {
@@ -82,7 +83,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val title = TextView(this).apply {
-            text = "Select Difficulty"
+            text = "Выберите сложность"
             textSize = 30f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
@@ -90,8 +91,15 @@ class MainActivity : AppCompatActivity() {
         }
         difficultyLayout.addView(title)
 
-        GameEngine.Difficulty.values().forEach { diff ->
-            val btn = createStyledButton(diff.name) {
+        // Translated Difficulty buttons
+        val difficulties = mapOf(
+            GameEngine.Difficulty.EASY to "Легко",
+            GameEngine.Difficulty.NORMAL to "Нормально",
+            GameEngine.Difficulty.HARD to "Сложно"
+        )
+
+        difficulties.forEach { (diff, name) ->
+            val btn = createStyledButton(name) {
                 startGame(diff)
             }
             difficultyLayout.addView(btn)
@@ -103,118 +111,84 @@ class MainActivity : AppCompatActivity() {
     private fun startGame(difficulty: GameEngine.Difficulty) {
         gameEngine.initGame(difficulty)
         setupGameUI()
-        showNextTurn()
     }
 
-    private lateinit var statsText: TextView
-    private lateinit var eventTitle: TextView
-    private lateinit var eventDesc: TextView
-    private lateinit var choicesLayout: LinearLayout
-
     private fun setupGameUI() {
-        val mainGameLayout = LinearLayout(this).apply {
+        rootLayout = FrameLayout(this)
+
+        // 1. Game View (The Map)
+        gameView = GameView(this, gameEngine) { building ->
+            handleBuildingInteraction(building)
+        }
+        rootLayout.addView(gameView)
+
+        // 2. HUD (Stats)
+        val statsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#1A1A2E"))
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
+            setBackgroundColor(Color.parseColor("#80000000")) // Semi-transparent
+            setPadding(20, 20, 20, 20)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
             )
-            setPadding(32, 32, 32, 32)
         }
 
-        // Stats Bar
         statsText = TextView(this).apply {
-            textSize = 18f
-            setTextColor(Color.parseColor("#F8E71C")) // Accent Yellow
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 20, 0, 20)
+            textSize = 16f
+            setTextColor(Color.parseColor("#F8E71C"))
         }
+        updateStatsDisplay()
 
-        // Card-like container for event
-        val eventCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#16213E")) // Panel Background
-                cornerRadius = 30f
-                setStroke(2, Color.parseColor("#FF0099")) // Neon Pink Border
-            }
-            setPadding(40, 40, 40, 40)
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f // Weight 1
-            ).apply {
-                setMargins(0, 20, 0, 20)
-            }
-        }
+        statsContainer.addView(statsText)
+        rootLayout.addView(statsContainer)
 
-        eventTitle = TextView(this).apply {
-            textSize = 24f
-            setTextColor(Color.parseColor("#00F0FF"))
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-        }
+        setContentView(rootLayout)
 
-        eventDesc = TextView(this).apply {
-            textSize = 18f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(0, 30, 0, 0)
-        }
-
-        eventCard.addView(eventTitle)
-        eventCard.addView(eventDesc)
-
-        // Choices Area
-        choicesLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.BOTTOM
-        }
-
-        mainGameLayout.addView(statsText)
-        mainGameLayout.addView(eventCard)
-        mainGameLayout.addView(choicesLayout)
-
-        setContentView(mainGameLayout)
+        Toast.makeText(this, "Исследуйте город! Идите к зданиям!", Toast.LENGTH_LONG).show()
     }
 
     private fun updateStatsDisplay() {
-        statsText.text = "Year: ${gameEngine.year} | 💰 ${gameEngine.budget} | 👥 ${gameEngine.population} | 😊 ${gameEngine.happiness}%"
+        statsText.text = "Год: ${gameEngine.year} | 💰 ${gameEngine.budget} | 👥 ${gameEngine.population} | 😊 ${gameEngine.happiness}%"
     }
 
-    private fun showNextTurn() {
-        if (gameEngine.gameOver) {
-            showGameOver()
+    private fun handleBuildingInteraction(building: Building) {
+        if (gameEngine.gameOver) return
+
+        if (building.eventTag == null) {
+            Toast.makeText(this, "Это ${building.name}. Здесь тихо.", Toast.LENGTH_SHORT).show()
             return
         }
 
-        updateStatsDisplay()
+        // Trigger Event
+        val event = StoryTeller.getRandomEvent(building.eventTag)
+        showEventDialog(event)
+    }
 
-        // Get Event
-        val event = StoryTeller.getRandomEvent()
+    private fun showEventDialog(event: GameEvent) {
+        val choices = event.choices.map { it.text }.toTypedArray()
 
-        eventTitle.text = event.title
-        eventDesc.text = event.description
-
-        choicesLayout.removeAllViews()
-
-        event.choices.forEach { choice ->
-            val btn = createStyledButton(choice.text) {
-                handleChoice(choice)
+        AlertDialog.Builder(this)
+            .setTitle(event.title)
+            .setMessage(event.description)
+            .setItems(choices) { dialog, which ->
+                handleChoice(event.choices[which])
             }
-            choicesLayout.addView(btn)
-        }
+            .setCancelable(false)
+            .show()
     }
 
     private fun handleChoice(choice: EventChoice) {
         gameEngine.applyEvent(choice)
+        updateStatsDisplay()
 
         // Show result feedback
         val dialog = AlertDialog.Builder(this)
-            .setTitle("Result")
+            .setTitle("Результат")
             .setMessage(choice.consequenceText)
-            .setPositiveButton("Next") { dialog, which ->
-                showNextTurn()
+            .setPositiveButton("ОК") { dialog, which ->
+                if (gameEngine.gameOver) {
+                    showGameOver()
+                }
             }
             .setCancelable(false)
             .create()
@@ -223,9 +197,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun showGameOver() {
         val dialog = AlertDialog.Builder(this)
-            .setTitle("GAME OVER")
-            .setMessage("${gameEngine.gameOverReason}\n\nFinal Year: ${gameEngine.year}")
-            .setPositiveButton("Return to Menu") { dialog, which ->
+            .setTitle("ИГРА ОКОНЧЕНА")
+            .setMessage("${gameEngine.gameOverReason}\n\nФинальный Год: ${gameEngine.year}")
+            .setPositiveButton("В Меню") { dialog, which ->
                 setupStartMenu()
             }
             .setCancelable(false)

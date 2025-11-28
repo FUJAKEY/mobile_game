@@ -1,6 +1,9 @@
 package com.poplos
 
-// Game State Class to manage the city
+import android.graphics.Color
+import android.graphics.RectF
+
+// Game State Class to manage the city and RPG elements
 class GameEngine {
     var year: Int = 2025
     var budget: Int = 10000
@@ -10,6 +13,20 @@ class GameEngine {
     var gameOver: Boolean = false
     var gameOverReason: String = ""
 
+    // RPG Elements
+    var playerX: Float = 500f
+    var playerY: Float = 500f
+    val playerSpeed: Float = 10f
+    val playerSize: Float = 60f
+
+    val buildings = listOf(
+        Building("Мэрия", 100f, 100f, Color.GRAY, null), // Base
+        Building("Парк", 800f, 200f, Color.GREEN, StoryTeller.getEvent("park")),
+        Building("Завод", 200f, 800f, Color.DKGRAY, StoryTeller.getEvent("factory")),
+        Building("Техно-Лаб", 800f, 800f, Color.CYAN, StoryTeller.getEvent("tech")),
+        Building("Торговый Центр", 500f, 400f, Color.MAGENTA, StoryTeller.getEvent("shop"))
+    )
+
     enum class Difficulty {
         EASY, NORMAL, HARD
     }
@@ -17,6 +34,9 @@ class GameEngine {
     fun initGame(difficulty: Difficulty) {
         this.difficulty = difficulty
         year = 2025
+        playerX = 500f
+        playerY = 500f
+
         when (difficulty) {
             Difficulty.EASY -> {
                 budget = 20000
@@ -49,19 +69,31 @@ class GameEngine {
     private fun checkGameOver() {
         if (budget <= 0) {
             gameOver = true
-            gameOverReason = "City went bankrupt! You are fired!"
+            gameOverReason = "Город обанкротился! Вы уволены!"
         } else if (happiness <= 0) {
             gameOver = true
-            gameOverReason = "Citizens rioted and overthrew you!"
+            gameOverReason = "Жители взбунтовались и свергли вас!"
         } else if (population <= 0) {
             gameOver = true
-            gameOverReason = "Everyone left the city. It's a ghost town."
+            gameOverReason = "Все покинули город. Это город-призрак."
         }
     }
 }
 
+data class Building(
+    val name: String,
+    val x: Float,
+    val y: Float,
+    val color: Int,
+    val eventTag: String? // Tag to fetch random event or specific event
+) {
+    val rect: RectF
+        get() = RectF(x, y, x + 200f, y + 150f)
+}
+
 // Data classes for Events
 data class GameEvent(
+    val id: String,
     val title: String,
     val description: String,
     val choices: List<EventChoice>
@@ -72,71 +104,87 @@ data class EventChoice(
     val budgetImpact: Int,
     val populationImpact: Int,
     val happinessImpact: Int,
-    val consequenceText: String // Text shown after selection
+    val consequenceText: String
 )
 
-// The Story Engine
+// The Story Engine - Translated to Russian
 object StoryTeller {
+    // Pool of events
     private val events = listOf(
         GameEvent(
-            "Flying Car Regulations",
-            "It's 2025! A startup wants to launch a flying taxi service in Poplos. It's risky but cool.",
+            "tech",
+            "Регулирование Летающих Машин",
+            "2025 год! Стартап хочет запустить летающее такси в Поплосе. Это рискованно, но круто.",
             listOf(
-                EventChoice("Approve it! (Cool factor)", -1000, 500, 10, "The taxis are a hit, but crash occasionally."),
-                EventChoice("Ban it (Safety first)", 0, 0, -5, "Citizens are bored but safe.")
+                EventChoice("Одобрить! (Круто)", -1000, 500, 10, "Такси популярны, но иногда падают на крыши."),
+                EventChoice("Запретить (Безопасность)", 0, 0, -5, "Жителям скучно, но они живы.")
             )
         ),
         GameEvent(
-            "Cyber-Rat Infestation",
-            "Genetically modified rats escaped from the lab. They are eating the internet cables!",
+            "factory",
+            "Кибер-Крысы на заводе",
+            "ГМО крысы сбежали из лаборатории и грызут интернет-кабели!",
             listOf(
-                EventChoice("Hire Cyber-Cats", -2000, 0, 5, "The cats laser-beamed the rats. Cute but expensive."),
-                EventChoice("Ignore them", 0, -100, -10, "No internet? People are furious!")
+                EventChoice("Нанять Кибер-Котов", -2000, 0, 5, "Коты уничтожили крыс лазерами. Мило, но дорого."),
+                EventChoice("Игнорировать", 0, -100, -10, "Нет интернета? Люди в ярости!")
             )
         ),
         GameEvent(
-            "Alien Tourism",
-            "Aliens from Mars want to build a resort in the city center.",
+            "park",
+            "Туристы с Марса",
+            "Пришельцы с Марса хотят построить курорт в центре парка.",
             listOf(
-                EventChoice("Welcome them!", 5000, 1000, -10, "They pay in gold, but smell like sulfur."),
-                EventChoice("Build a wall", -5000, 0, 5, "We stay human. But poor.")
+                EventChoice("Добро пожаловать!", 5000, 1000, -10, "Они платят золотом, но пахнут серой."),
+                EventChoice("Построить стену", -5000, 0, 5, "Мы останемся людьми. Но бедными.")
             )
         ),
         GameEvent(
-            "AI Mayor Assistant",
-            "A tech company offers an AI to help you run the city. It promises +200% efficiency.",
+            "tech",
+            "ИИ Помощник Мэра",
+            "IT компания предлагает ИИ для управления городом. Обещают +200% эффективности.",
             listOf(
-                EventChoice("Install AI", -500, 0, 0, "The AI is helpful... wait, why is it locking the doors?"),
-                EventChoice("Trust my gut", 0, 0, 5, "Human intuition wins this round.")
+                EventChoice("Установить ИИ", -500, 0, 0, "ИИ помогает... стоп, почему он запер двери?"),
+                EventChoice("Довериться чутью", 0, 0, 5, "Человеческая интуиция побеждает.")
             )
         ),
         GameEvent(
-            "The Neon Festival",
-            "Youth wants to organize a massive neon light festival.",
+            "shop",
+            "Неоновый Фестиваль",
+            "Молодежь хочет устроить грандиозный фестиваль света.",
             listOf(
-                EventChoice("Fund it", -3000, 200, 20, "The city glows! Tourists flock in."),
-                EventChoice("Too loud", 0, -50, -10, "You become known as the 'Boring Mayor'.")
+                EventChoice("Финансировать", -3000, 200, 20, "Город сияет! Туристы в восторге."),
+                EventChoice("Слишком шумно", 0, -50, -10, "Вас прозвали 'Скучный Мэр'.")
             )
         ),
          GameEvent(
-            "Crypto-Roads",
-            "A proposal to pave roads with discarded crypto-mining GPUs.",
+            "factory",
+            "Крипто-Дороги",
+            "Предложение замостить дороги старыми видеокартами для майнинга.",
             listOf(
-                EventChoice("Do it", -1000, 0, 10, "The roads are warm and compute hash in winter."),
-                EventChoice("Are you crazy?", 0, 0, 0, "We stick to asphalt.")
+                EventChoice("Сделать это", -1000, 0, 10, "Дороги теплые и майнят крипту зимой."),
+                EventChoice("Вы спятили?", 0, 0, 0, "Мы оставим асфальт.")
             )
         ),
         GameEvent(
-            "Giant Robot Fight",
-            "Two giant mechs decided to fight in downtown.",
+            "shop",
+            "Битва Гигантских Роботов",
+            "Два меха решили подраться в центре города.",
             listOf(
-                EventChoice("Sell tickets", 10000, -500, -20, "Profitable destruction!"),
-                EventChoice("Evacuate & Repair", -5000, 0, 10, "Expensive, but people appreciate the safety.")
+                EventChoice("Продавать билеты", 10000, -500, -20, "Прибыльное разрушение!"),
+                EventChoice("Эвакуация и Ремонт", -5000, 0, 10, "Дорого, но люди ценят заботу.")
             )
         )
     )
 
-    fun getRandomEvent(): GameEvent {
+    fun getEvent(tag: String?): String? {
+        // Just returns the tag to identify type, real event logic fetches random per tag or completely random
+        return tag
+    }
+
+    fun getRandomEvent(tag: String?): GameEvent {
+        // If tag matches, try to find one, else random
+        val filtered = if (tag != null) events.filter { it.id == tag } else events
+        if (filtered.isNotEmpty()) return filtered.random()
         return events.random()
     }
 }
