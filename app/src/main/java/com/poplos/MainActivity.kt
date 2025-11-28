@@ -206,14 +206,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun handleChoice(choice: GameEngine.EventChoice) {
+    private fun handleChoice(choice: EventChoice) {
         gameEngine.applyEvent(choice)
 
         // Show result feedback
         val dialog = AlertDialog.Builder(this)
             .setTitle("Result")
             .setMessage(choice.consequenceText)
-            .setPositiveButton("Next") { _, _ ->
+            .setPositiveButton("Next") { dialog, which ->
                 showNextTurn()
             }
             .setCancelable(false)
@@ -225,7 +225,7 @@ class MainActivity : AppCompatActivity() {
         val dialog = AlertDialog.Builder(this)
             .setTitle("GAME OVER")
             .setMessage("${gameEngine.gameOverReason}\n\nFinal Year: ${gameEngine.year}")
-            .setPositiveButton("Return to Menu") { _, _ ->
+            .setPositiveButton("Return to Menu") { dialog, which ->
                 setupStartMenu()
             }
             .setCancelable(false)
