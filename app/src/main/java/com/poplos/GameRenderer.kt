@@ -38,10 +38,6 @@ class GameRenderer : GLSurfaceView.Renderer {
     var joyMoveX = 0f
     var joyMoveY = 0f // Up is -1 usually, but we will flip it in view so Up is +1 or handle here
 
-    // Joystick 2 (Look): Normalized -1 to 1
-    var joyLookX = 0f
-    var joyLookY = 0f
-
     // Level
     private val platforms = ArrayList<Platform>()
 
@@ -113,16 +109,15 @@ class GameRenderer : GLSurfaceView.Renderer {
         mCube.draw(mvp, p.color)
     }
 
-    private fun updatePhysics() {
-        // Camera Look Update (Right Joystick)
-        // joyLookX > 0 -> Turn Right (Increase Yaw)
-        // joyLookY < 0 -> Look Up (Increase Pitch)
-        cameraYaw += joyLookX * 2.0f
-        cameraPitch -= joyLookY * 2.0f // Inverted Y logic usually feels natural for look, or check
+    fun rotateCamera(dx: Float, dy: Float) {
+        cameraYaw += dx
+        cameraPitch += dy
 
         if (cameraPitch > 89f) cameraPitch = 89f
         if (cameraPitch < -89f) cameraPitch = -89f
+    }
 
+    private fun updatePhysics() {
         // Movement Logic (Left Joystick)
         // We want: Joystick UP (joyMoveY < 0) -> Move Forward (Direction of Camera)
         // Joystick RIGHT (joyMoveX > 0) -> Move Right (Strafe)

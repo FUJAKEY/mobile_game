@@ -3,9 +3,9 @@ package com.poplos
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
+import android.view.MotionEvent
 import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.LinearLayout
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
@@ -32,19 +32,7 @@ class MainActivity : AppCompatActivity() {
             gameView.setMoveInput(x, y)
         }
 
-        // Right Joystick (Look)
-        val rightJoystick = JoystickView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(400, 400).apply {
-                gravity = Gravity.BOTTOM or Gravity.END
-                setMargins(0, 0, 50, 50)
-            }
-        }
-        rightJoystick.setOnMoveListener { x, y ->
-            gameView.setLookInput(x, y)
-        }
-
-        // Jump Button (Center Bottom or Near Right Joystick)
-        // Let's put it above Right Joystick
+        // Jump Button
         val jumpButton = Button(this).apply {
             text = "JUMP"
             textSize = 20f
@@ -52,15 +40,21 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#80FF0099")) // Semi-transparent pink
             layoutParams = FrameLayout.LayoutParams(300, 150).apply {
                 gravity = Gravity.BOTTOM or Gravity.END
-                setMargins(0, 0, 100, 500) // Above joystick
-            }
-            setOnClickListener {
-                gameView.jump()
+                setMargins(0, 0, 50, 50) // Bottom Right
             }
         }
 
+        // Handle Jump on Touch Down
+        jumpButton.setOnTouchListener { v, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                gameView.jump()
+                v.performClick() // Accessibility compliance
+            }
+            // Consume event so it doesn't pass through
+            true
+        }
+
         overlayLayout.addView(leftJoystick)
-        overlayLayout.addView(rightJoystick)
         overlayLayout.addView(jumpButton)
 
         // Combine
