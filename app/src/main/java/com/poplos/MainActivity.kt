@@ -3,10 +3,9 @@ package com.poplos
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
-import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.TextView
+import android.widget.LinearLayout
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
@@ -19,34 +18,50 @@ class MainActivity : AppCompatActivity() {
         // 1. 3D Game View
         gameView = GameSurfaceView(this)
 
-        // 2. UI Overlay (Jump Button)
+        // 2. UI Overlay
         val overlayLayout = FrameLayout(this)
 
-        // Jump Button
+        // Left Joystick (Move)
+        val leftJoystick = JoystickView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(400, 400).apply {
+                gravity = Gravity.BOTTOM or Gravity.START
+                setMargins(50, 0, 0, 50)
+            }
+        }
+        leftJoystick.setOnMoveListener { x, y ->
+            gameView.setMoveInput(x, y)
+        }
+
+        // Right Joystick (Look)
+        val rightJoystick = JoystickView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(400, 400).apply {
+                gravity = Gravity.BOTTOM or Gravity.END
+                setMargins(0, 0, 50, 50)
+            }
+        }
+        rightJoystick.setOnMoveListener { x, y ->
+            gameView.setLookInput(x, y)
+        }
+
+        // Jump Button (Center Bottom or Near Right Joystick)
+        // Let's put it above Right Joystick
         val jumpButton = Button(this).apply {
             text = "JUMP"
-            textSize = 24f
+            textSize = 20f
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#80FF0099")) // Semi-transparent pink
-            layoutParams = FrameLayout.LayoutParams(300, 200).apply {
+            layoutParams = FrameLayout.LayoutParams(300, 150).apply {
                 gravity = Gravity.BOTTOM or Gravity.END
-                setMargins(50, 50, 50, 50)
+                setMargins(0, 0, 100, 500) // Above joystick
             }
             setOnClickListener {
                 gameView.jump()
             }
         }
 
-        // Instructions Text
-        val instructions = TextView(this).apply {
-            text = "Left: Move | Right: Look"
-            setTextColor(Color.WHITE)
-            textSize = 18f
-            setPadding(50, 50, 0, 0)
-        }
-
+        overlayLayout.addView(leftJoystick)
+        overlayLayout.addView(rightJoystick)
         overlayLayout.addView(jumpButton)
-        overlayLayout.addView(instructions)
 
         // Combine
         val rootLayout = FrameLayout(this)

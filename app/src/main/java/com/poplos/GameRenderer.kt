@@ -34,8 +34,13 @@ class GameRenderer : GLSurfaceView.Renderer {
     var onGround = false
 
     // Input
-    var inputMoveX = 0f // Strafe
-    var inputMoveZ = 0f // Forward/Back
+    // Joystick 1 (Move): Normalized -1 to 1
+    var joyMoveX = 0f
+    var joyMoveY = 0f // Up is -1 usually, but we will flip it in view so Up is +1 or handle here
+
+    // Joystick 2 (Look): Normalized -1 to 1
+    var joyLookX = 0f
+    var joyLookY = 0f
 
     // Level
     private val platforms = ArrayList<Platform>()
@@ -45,8 +50,6 @@ class GameRenderer : GLSurfaceView.Renderer {
         GLES20.glEnable(GLES20.GL_DEPTH_TEST)
 
         mCube = Cube()
-
-        // Generate "Only Jump" level
         generateLevel()
     }
 
@@ -66,7 +69,6 @@ class GameRenderer : GLSurfaceView.Renderer {
             val width = 2f + (Math.random().toFloat() * 2f)
             val depth = 2f + (Math.random().toFloat() * 2f)
 
-            // Random Colors
             val r = Math.random().toFloat()
             val g = Math.random().toFloat()
             val b = Math.random().toFloat()
@@ -112,24 +114,40 @@ class GameRenderer : GLSurfaceView.Renderer {
     }
 
     private fun updatePhysics() {
-        // Movement relative to camera
+        // Camera Look Update (Right Joystick)
+        // joyLookX > 0 -> Turn Right (Increase Yaw)
+        // joyLookY < 0 -> Look Up (Increase Pitch)
+        cameraYaw += joyLookX * 2.0f
+        cameraPitch -= joyLookY * 2.0f // Inverted Y logic usually feels natural for look, or check
+
+        if (cameraPitch > 89f) cameraPitch = 89f
+        if (cameraPitch < -89f) cameraPitch = -89f
+
+        // Movement Logic (Left Joystick)
+        // We want: Joystick UP (joyMoveY < 0) -> Move Forward (Direction of Camera)
+        // Joystick RIGHT (joyMoveX > 0) -> Move Right (Strafe)
+
         val rad = Math.toRadians(cameraYaw.toDouble())
         val cos = cos(rad).toFloat()
         val sin = sin(rad).toFloat()
 
-        // inputMoveZ is Forward/Back (drag Y), inputMoveX is Strafe (drag X)
-        // Actually, let's interpret inputs simpler:
-        // We need a proper movement vector.
-        // For now, let's assume auto-forward if touching? No, let's use the inputs derived from touch.
-        // Touch Input is delta, so it acts like velocity.
+        // Forward Vector (Horizontal projection): X = sin(yaw), Z = -cos(yaw)
+        // Right Vector: X = cos(yaw), Z = sin(yaw)
 
-        val speed = 0.5f // sensitivity
-        val dz = -(inputMoveZ * cos - inputMoveX * sin) * speed
-        val dx = -(inputMoveZ * sin + inputMoveX * cos) * speed
+        // Inputs:
+        // Forward Input = -joyMoveY (because Up is -1, and we want +1 input)
+        // Right Input = joyMoveX
 
-        // Apply Move (Horizontal)
-        // Simple AABB collision check *before* moving would be better, but for "Only Jump" simpler:
-        // Move X/Z, then check if we are on a platform.
+        val forwardInput = -joyMoveY
+        val rightInput = joyMoveX
+
+        val moveSpeed = 0.15f
+
+        // dx = (ForwardInput * ForwardX) + (RightInput * RightX)
+        val dx = (forwardInput * sin + rightInput * cos) * moveSpeed
+
+        // dz = (ForwardInput * ForwardZ) + (RightInput * RightZ)
+        val dz = (forwardInput * (-cos) + rightInput * sin) * moveSpeed
 
         playerX += dx
         playerZ += dz
@@ -141,11 +159,6 @@ class GameRenderer : GLSurfaceView.Renderer {
         // Ground Collision
         onGround = false
 
-        // Check collision with all platforms
-        // Player is a point (or small cylinder) at playerX, playerY, playerZ
-        // Platform is AABB centered at p.x, p.y, p.z with size p.width, p.height, p.depth
-        // Cube model is -0.5 to 0.5. So scaled: p.x - width/2 ... p.x + width/2
-
         for (p in platforms) {
             val minX = p.x - p.width/2
             val maxX = p.x + p.width/2
@@ -155,11 +168,9 @@ class GameRenderer : GLSurfaceView.Renderer {
 
             // Check horizontal bounds
             if (playerX in minX..maxX && playerZ in minZ..maxZ) {
-                // Check vertical
-                // If we are falling and hit the top
+                // Check vertical (Land on top)
                 if (velocityY <= 0 && playerY < (maxY + 1.0f) && playerY > (maxY - 0.5f)) {
-                    // Landed
-                    playerY = maxY + 1.0f // Stand on top (player height offset ~1.0)
+                    playerY = maxY + 1.0f
                     velocityY = 0f
                     onGround = true
                 }
