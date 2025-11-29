@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest  # Windows runner
+    runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v4
@@ -26,7 +26,7 @@ jobs:
 
     - name: Build EXE
       run: |
-        pyinstaller --onefile --windowed --name=winlocker_prank.exe winlocker.py
+        pyinstaller --onefile --windowed --hidden-import=win32gui --hidden-import=win32con --hidden-import=win32api --hidden-import=win32security --name=winlocker_prank.exe winlocker.py
 
     - name: Upload EXE artifact
       uses: actions/upload-artifact@v4
