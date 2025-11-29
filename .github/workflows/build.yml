@@ -13,11 +13,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup MSVC
-      uses: microsoft/setup-msbuild@v2
+    - name: Setup MSVC Developer Command Prompt
+      uses: ilammy/msvc-dev-cmd@v1  # <- Это добавляет cl.exe в PATH
 
     - name: Build EXE
-      shell: cmd  # <- Вот это фиксит: используем cmd вместо PowerShell
+      shell: cmd
       run: |
         cl /EHsc main.cpp /link user32.lib gdi32.lib comctl32.lib /OUT:winlocker_prank.exe
         if %errorlevel% neq 0 exit /b %errorlevel%
