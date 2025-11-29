@@ -14,12 +14,13 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Setup MSVC Developer Command Prompt
-      uses: ilammy/msvc-dev-cmd@v1  # <- Это добавляет cl.exe в PATH
+      uses: ilammy/msvc-dev-cmd@v1
 
     - name: Build EXE
       shell: cmd
+      # Фикс: добавлена advapi32.lib для работы с реестром
       run: |
-        cl /EHsc main.cpp /link user32.lib gdi32.lib comctl32.lib /OUT:winlocker_prank.exe
+        cl /EHsc main.cpp /link user32.lib gdi32.lib comctl32.lib advapi32.lib /OUT:winlocker_prank.exe
         if %errorlevel% neq 0 exit /b %errorlevel%
 
     - name: Upload EXE artifact
