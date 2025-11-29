@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  build-winlocker:  # Имя сборщика
+  build-winlocker:
     runs-on: windows-latest
 
     steps:
@@ -17,6 +17,7 @@ jobs:
       uses: microsoft/setup-msbuild@v2
 
     - name: Build EXE
+      shell: cmd  # <- Вот это фиксит: используем cmd вместо PowerShell
       run: |
         cl /EHsc main.cpp /link user32.lib gdi32.lib comctl32.lib /OUT:winlocker_prank.exe
         if %errorlevel% neq 0 exit /b %errorlevel%
