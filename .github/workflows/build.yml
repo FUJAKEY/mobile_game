@@ -1,4 +1,4 @@
-name: Build WinLocker EXE
+name: Build WinLocker C++
 
 on:
   push:
@@ -7,30 +7,23 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  build-winlocker:  # Имя сборщика
     runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pyinstaller
+    - name: Setup MSVC
+      uses: microsoft/setup-msbuild@v2
 
     - name: Build EXE
       run: |
-        pyinstaller --onefile --windowed --hidden-import=win32gui --hidden-import=win32con --hidden-import=win32api --hidden-import=win32security --name=winlocker_prank.exe winlocker.py
+        cl /EHsc main.cpp /link user32.lib gdi32.lib comctl32.lib /OUT:winlocker_prank.exe
+        if %errorlevel% neq 0 exit /b %errorlevel%
 
     - name: Upload EXE artifact
       uses: actions/upload-artifact@v4
       with:
         name: winlocker-exe
-        path: dist/winlocker_prank.exe
+        path: winlocker_prank.exe
         retention-days: 30
